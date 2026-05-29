@@ -45,5 +45,8 @@ output/
 *.log
 node_modules/
 
+# Local active database directories
+day9/labs/openmetadata_sandbox/docker-volume/db-data/
+
 .vercel
 .env*
