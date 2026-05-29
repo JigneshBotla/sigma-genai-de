@@ -150,10 +150,10 @@ class HealingMemory:
         self.conn.close()
 
 # ── The broken pipeline (intentionally buggy) ─────────────────────────────────
-BROKEN_PIPELINE = '''\
+BROKEN_PIPELINE = f'''\
 import duckdb, os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "sigma_platform.duckdb")
+DB_PATH = r"{DB_PATH}"  # injected at runtime — safe across temp file execution
 
 def run_merchant_report():
     conn = duckdb.connect(DB_PATH, read_only=True)
