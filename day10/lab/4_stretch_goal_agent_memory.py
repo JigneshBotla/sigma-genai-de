@@ -195,7 +195,7 @@ def run_merchant_report():
 
 if __name__ == "__main__":
     run_merchant_report()
-'''
+'''.replace("{DB_PATH}", DB_PATH)
 
 # ── Safe code runner (sandboxed exec with timeout) ────────────────────────────
 def safe_run(code: str, timeout_seconds: int = 15) -> tuple[bool, str]:
