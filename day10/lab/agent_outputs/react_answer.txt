@@ -1,0 +1,9 @@
+Question: Which 3 merchants had the most suspicious transaction patterns? Look for merchants with high transaction volume but also unusual average amounts (either very high or very low compared to others). Give me their names, transaction count, and average amount.
+
+Steps taken: 6
+
+Answer:
+The 3 merchants with the most suspicious transaction patterns are:
+1. Swiggy with 5 transactions and an average amount of 20315.998000
+2. Amazon with 3 transactions and an average amount of 696.833333
+3. Ola with 3 transactions and an average amount of 1586.666667

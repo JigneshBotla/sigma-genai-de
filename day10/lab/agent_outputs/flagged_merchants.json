@@ -1,0 +1,7 @@
+[
+  {
+    "merchant_id": "M001",
+    "reason": "Transaction count >= 2 and avg amount < 1500",
+    "flagged_at": "2026-05-29T17:43:36.389487"
+  }
+]

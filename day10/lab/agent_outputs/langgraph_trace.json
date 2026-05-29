@@ -1,0 +1,38 @@
+[
+  {
+    "question": "Which payment methods are growing fastest this month compared to last month? Show percentage growth.",
+    "final_sql": "SELECT \n    payment_method, \n    COALESCE(\n        (\n            (SUM(CASE WHEN transaction_date >= DATE_TRUNC('month', CURRENT_DATE) THEN 1 ELSE 0 END) \n            / NULLIF(SUM(CASE WHEN transaction_date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month') AND transaction_date < DATE_TRUNC('month', CURRENT_DATE) THEN 1 ELSE 0 END), 0) \n            - 1\n        ) * 100.0\n        ), 0) AS growth_percentage \nFROM \n    silver_transactions \nWHERE \n    transaction_date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 months') \n    AND transaction_date < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' \n    AND payment_method IS NOT NULL \n    AND amount IS NOT NULL \n    AND quality_flag = 'valid' \nGROUP BY \n    payment_method \nORDER BY \n    growth_percentage DESC;",
+    "review_rounds": 3,
+    "approved": false,
+    "result_preview": "Query returned 0 rows.",
+    "answer": "Unfortunately, the SQL query did not return any data, so it is not possible to provide specific figures or percentage growth for the payment methods this month compared to last month. Further investigation or a revised query may be necessary to obtain the required information.",
+    "trace": [
+      "[Generator] Round 1: Generated SQL (670 chars)",
+      "[Reviewer] Round 1: REJECTED",
+      "[Generator] Round 2: Generated SQL (670 chars)",
+      "[Reviewer] Round 2: REJECTED",
+      "[Generator] Round 3: Generated SQL (780 chars)",
+      "[Reviewer] Round 3: REJECTED",
+      "[Executor] SQL ran successfully. 0 rows."
+    ],
+    "student_judgment": "Agent 2 caught a potential logic bug in the SQL query structure to ensure the calculations were correct."
+  },
+  {
+    "question": "Which 5 merchants have the highest refund rate? Show refund count and total transaction count.",
+    "final_sql": "SELECT m.merchant_id, m.merchant_name, COUNT(DISTINCT CASE WHEN st.status = 'REFUNDED' THEN st.transaction_id END) AS refund_count, COUNT(DISTINCT st.transaction_id) AS total_transaction_count, COALESCE((COUNT(DISTINCT CASE WHEN st.status = 'REFUNDED' THEN st.transaction_id END) / NULLIF(COUNT(DISTINCT st.transaction_id), 0)) * 100, 0) AS refund_rate FROM merchants m JOIN silver_transactions st ON m.merchant_id = st.merchant_id WHERE st.quality_flag = 'valid' AND st.transaction_date BETWEEN DATE_TRUNC('year', CURRENT_DATE) AND CURRENT_DATE AND st.status = 'REFUNDED' GROUP BY m.merchant_id, m.merchant_name ORDER BY refund_rate DESC LIMIT 5;",
+    "review_rounds": 3,
+    "approved": false,
+    "result_preview": "Query returned 0 rows.",
+    "answer": "Based on the current data, there are no merchants with recorded refunds, as the query returned 0 rows. Therefore, it is not possible to identify the top 5 merchants with the highest refund rate, nor can we provide specific figures for refund count and total transaction count.",
+    "trace": [
+      "[Generator] Round 1: Generated SQL (558 chars)",
+      "[Reviewer] Round 1: REJECTED",
+      "[Generator] Round 2: Generated SQL (582 chars)",
+      "[Reviewer] Round 2: REJECTED",
+      "[Generator] Round 3: Generated SQL (647 chars)",
+      "[Reviewer] Round 3: REJECTED",
+      "[Executor] SQL ran successfully. 0 rows."
+    ],
+    "student_judgment": "Agent 2 caught a potential logic bug in the SQL query structure to ensure the calculations were correct."
+  }
+]
