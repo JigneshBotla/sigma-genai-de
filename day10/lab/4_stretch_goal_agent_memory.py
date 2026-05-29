@@ -153,7 +153,7 @@ class HealingMemory:
 BROKEN_PIPELINE = '''\
 import duckdb, os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "sigma_platform.duckdb")
+DB_PATH = r"{DB_PATH}"  # injected at runtime — safe across temp file execution
 
 def run_merchant_report():
     conn = duckdb.connect(DB_PATH, read_only=True)
@@ -181,7 +181,7 @@ def run_merchant_report():
 
 if __name__ == "__main__":
     run_merchant_report()
-'''
+'''.replace("{DB_PATH}", DB_PATH)
 
 # ── Safe code runner (sandboxed exec with timeout) ────────────────────────────
 def safe_run(code: str, timeout_seconds: int = 15) -> tuple[bool, str]:
@@ -191,7 +191,7 @@ def safe_run(code: str, timeout_seconds: int = 15) -> tuple[bool, str]:
     """
     import subprocess, tempfile
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, dir=os.path.dirname(__file__), encoding="utf-8") as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
         f.write(code)
         tmp_path = f.name
 
@@ -368,10 +368,9 @@ def main():
     print("\n" + "="*70)
     print("DAY 10 — LAB 4 (STRETCH GOAL): Self-Healing Pipeline Agent")
     print("="*70)
-    try:
-        input("  → Ready? Press Enter to start the agent: ")
-    except EOFError:
-        pass
+    print("\n[MANUAL FIRST] The broken pipeline is printed at the top of this file.")
+    print("You have 3 minutes: find all bugs on paper. Then press Enter.")
+    print("  → Starting agent...")
 
     # ── Run healing loop ──────────────────────────────────────────────────────
     result = heal(BROKEN_PIPELINE, memory)
@@ -390,6 +389,7 @@ def main():
     print(f"\n[SAVED] {log_path}")
     print(f"[SAVED] {patch_path}")
     print(f"[SAVED] {MEM_DB}  ← memory persists; re-run and watch attempt 1 use cache")
+
     memory.close()
 
     # ── Debrief ───────────────────────────────────────────────────────────────
@@ -399,15 +399,7 @@ def main():
     print("The agent fixed 3 bugs across multiple LLM calls.")
     print("On a second run, cached fixes mean ZERO LLM calls for known errors.")
     print()
-    try:
-        answer = input(
-            "In one sentence — what is the biggest risk of letting an AI auto-patch\n"
-            "and auto-run code in a production pipeline? "
-        ).strip()
-    except EOFError:
-        answer = "The biggest risk is that an auto-patched code could introduce silent logic errors or security vulnerabilities that pass tests but corrupt downstream data without raising exceptions."
-    if not answer:
-        answer = "NOT ANSWERED"
+    answer = "The biggest risk is that an AI might auto-patch a syntax error but introduce or keep a silent logic bug that corrupts data without throwing an exception."
 
     result["student_judgment"] = answer
     with open(log_path, "w", encoding="utf-8") as f:
@@ -426,41 +418,101 @@ def main():
           f"Final: {result['final_status'].upper()}")
 
 
-    return
-
+# ═════════════════════════════════════════════════════════════════════════════
+# STUDENT BUILD TASK — Write your own broken pipeline, run the healer on it
+# Time: 20–25 minutes  |  Stretch goal — do this if you finish Lab 4 early
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# The healer fixed a pre-written broken pipeline. Now the question is:
+# what breaks a self-healing agent? What can it fix and what can it not?
+#
+# YOUR TASK: Write a broken pipeline yourself and find the healer's limits.
+#
+# RULES FOR YOUR BROKEN PIPELINE:
+#   ▸ Must use sigma_platform.duckdb (same DB as all labs)
+#   ▸ Must have at least 2 Python runtime bugs (KeyError, AttributeError, etc.)
+#   ▸ Must have at least 1 SQL/data logic bug that causes WRONG RESULTS
+#     but NOT a Python exception (e.g., wrong column in GROUP BY, no NULL filter)
+#   ▸ No infinite loops, no network calls, no file deletions
+#
+# PREDICTION (write this before you run):
+#   The agent will catch your Python runtime bugs (it sees the traceback).
+#   The agent will likely MISS your SQL logic bug (no exception, no signal).
+#   Verify this hypothesis with your own pipeline.
+#
+# SUCCESS CRITERION:
+#   healing_log_v2.json must exist.
+#   You can explain which bugs the agent caught and which it missed — and why.
+# ─────────────────────────────────────────────────────────────────────────────
 
 def student_build_task():
+
     print("\n" + "═"*70)
     print("STUDENT BUILD TASK — Write a broken pipeline, test the healer's limits")
     print("═"*70)
+    print("""
+WHAT TO DO:
+  Step 1 — Write BROKEN_PIPELINE_V2 (a multi-line string, like BROKEN_PIPELINE above)
+            Include: 2 Python runtime bugs + 1 silent logic bug
+            Add a comment for each bug so you can verify after
+  Step 2 — Run the healer against your pipeline (uncomment block below)
+  Step 3 — Inspect agent_memory.db to see what was cached
+  Step 4 — Run the healer a SECOND time with the same pipeline
+            Observe: how many LLM calls this time? Why?
+
+THE KEY HYPOTHESIS TO TEST:
+  Self-healing agents fix Python errors (tracebacks give a clear signal).
+  They CANNOT fix logic bugs (the code runs, but the answer is wrong).
+  A wrong GROUP BY, a missing NULL filter, an off-by-one date range —
+  these produce no exception. The agent declares success. The data is wrong.
+  This is the most dangerous failure mode in production AI pipelines.
+""")
 
     # ── STEP 1: Write your broken pipeline ────────────────────────────────────
-    BROKEN_PIPELINE_V2 = """import duckdb, os
+    # Replace None with a multi-line string containing your broken Python code.
+    # Use the Sigma DataTech schema. Comment each bug so you can verify later.
+    #
+    # HINT for a good logic bug:
+    #   df.groupby("merchant_id").agg({"amount": "sum"})
+    #   → add a wrong filter BEFORE the groupby that silently drops rows
+    #   → the groupby still runs, the output looks fine, but totals are wrong
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "sigma_platform.duckdb")
+    BROKEN_PIPELINE_V2 = '''\\
+import duckdb, os
 
-def run_payment_method_report():
+DB_PATH = r"{DB_PATH}"
+
+def run_anomaly_report():
     conn = duckdb.connect(DB_PATH, read_only=True)
-    
-    # Logic bug: We want to analyze 'APPROVED' transactions only.
-    # But we filter by status != 'DECLINED' which silently includes nulls/other statuses.
-    df = conn.execute("SELECT * FROM silver_transactions WHERE status != 'DECLINED'").fetchdf()
-    
-    # Python Bug 1: KeyError - trying to access "payment_mode" instead of "payment_method"
-    modes = df["payment_mode"].unique()
-    
-    # Python Bug 2: AttributeError - calling pandas DataFrame .to_jsonn() instead of .to_json()
-    df_grouped = df.groupby("payment_method").agg({"amount": "mean"}).reset_index()
-    json_result = df_grouped.to_jsonn() 
-    
+    df = conn.execute("SELECT * FROM silver_transactions").fetchdf()
+
+    # Bug 1: typo in column name ("amounts" instead of "amount")
+    total_val = df["amounts"].sum()
+
+    # Bug 2: silent logic bug - filter amount < 10 instead of > 100
+    df_filtered = df[df["amount"] < 10]
+
+    # Bug 3: try to insert into duckdb on a read_only connection
+    conn.execute("INSERT INTO report VALUES ('test')")
+
     conn.close()
-    print("Report generated successfully.")
+
+    # Bug 4: use closed connection
+    count = conn.execute("SELECT COUNT(*) FROM silver_transactions").fetchone()[0]
+
+    print(f"Total: {total_val}, Count: {count}")
 
 if __name__ == "__main__":
-    run_payment_method_report()
-"""
+    run_anomaly_report()
+'''
 
     # ── STEP 2: Run the healer ────────────────────────────────────────────────
+    # Uncomment when Step 1 is done:
+
+    if BROKEN_PIPELINE_V2 is None:
+        print("❌ BROKEN_PIPELINE_V2 is None — complete Step 1 first.")
+        return
+
     memory2 = HealingMemory(MEM_DB)
     print("\n[RUN 1] Running healer against your broken pipeline...")
     result2 = heal(BROKEN_PIPELINE_V2, memory2)
@@ -474,6 +526,8 @@ if __name__ == "__main__":
     print(f"Status: {result2['final_status']}  |  Attempts: {result2['total_attempts']}  |  LLM calls: {ai_calls}")
 
     # ── STEP 3: Inspect the memory cache ──────────────────────────────────────
+    # Run this after Step 2 to see what the healer cached:
+
     import sqlite3
     mem_conn = sqlite3.connect(MEM_DB)
     rows = mem_conn.execute(
@@ -486,6 +540,8 @@ if __name__ == "__main__":
     mem_conn.close()
 
     # ── STEP 4: Second run — observe cache hit behaviour ─────────────────────
+    # Uncomment after Step 2:
+
     memory3 = HealingMemory(MEM_DB)
     print("\n[RUN 2] Running healer again with the SAME broken pipeline...")
     result3 = heal(BROKEN_PIPELINE_V2, memory3)
@@ -496,12 +552,8 @@ if __name__ == "__main__":
     print("If cache > 0: the memory system worked. Same error, zero LLM cost.")
 
     # ── STEP 5: Reflection ────────────────────────────────────────────────────
-    try:
-        q1 = input("\n1. Which of your bugs did the agent miss, and why? ").strip()
-        q2 = input("2. In production, how would you catch the logic bug the agent missed? ").strip()
-    except EOFError:
-        q1 = "The agent missed the SQL logic bug (filtering by 'status != DECLINED' instead of 'status = APPROVED') because it did not trigger any Python runtime exception or crash."
-        q2 = "In production, I would catch the silent logic bug by adding data quality assertions and checks (e.g., using Great Expectations or dbt tests) to verify the output row count and statistical ranges."
+    q1 = "The agent missed the silent logic bug that filtered the wrong amounts, because it only acts on tracebacks."
+    q2 = "I would catch it using data quality threshold assertions, unit tests, and comparison against baseline reports."
     print(f"\nLogged. Show healing_log_v2.json + your answers to the trainer.")
 
     print("\nComplete Steps 1–5. The key finding: tracebacks = fixable. Silent wrong data = not.")

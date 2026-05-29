@@ -129,7 +129,7 @@ Available tools:
   query_db(sql)         — Run a SQL query against the Sigma DataTech database
   get_schema()          — Get table names and column definitions
   calculate(expression) — Evaluate a simple math expression (e.g. "12345 / 30")
-  flag_merchant(input)  — Flag a merchant as suspicious. Input must be "merchant_id, reason"
+  flag_merchant(input_str) — Flag a merchant as suspicious (expects a string of: "merchant_id, reason")
 """
 
 # ── ReAct system prompt ───────────────────────────────────────────────────────
@@ -148,19 +148,30 @@ Thought: I now have the answer.
 Final Answer: [your complete answer with specific numbers from the data]
 
 Rules:
-- NEVER make up data. Only use what tools return.
+- NEVER make up data or simulate tool runs. Only use what tools return.
+- NEVER write "Observation:" in your output. You must write one step at a time (Thought, Action, Input) and stop so the system can run the tool and provide the real observation.
+- NEVER combine a tool call (Action/Input) and a "Final Answer:" in the same response. If you need to call a tool, output ONLY Thought, Action, and Input.
 - If a query fails, fix the SQL and retry.
 - Always call get_schema first if you are unsure about table structure.
 - Maximum {MAX_ITER} steps then give your best answer.
-- CRITICAL: Generate ONLY ONE Thought, Action, and Input per turn.
-- Stop generating immediately after outputting the Input block.
-- NEVER write "Observation:" or simulate the tool outputs yourself. The system will run the tool and provide the real "Observation:" in the next turn.
 """
 
 # ── Parse agent output ────────────────────────────────────────────────────────
 def parse_agent_output(text: str) -> dict:
     """Extract Thought, Action, Input, or Final Answer from LLM output."""
     result = {"thought": "", "action": None, "input": "", "final_answer": None}
+
+    # Prioritize Action if present to avoid simulated loops in LLM outputs
+    action_match  = re.search(r"Action:\s*(\w+)", text)
+    if action_match:
+        result["action"] = action_match.group(1).strip()
+        thought_match = re.search(r"Thought:(.*?)(?:Action:|$)", text, re.DOTALL)
+        if thought_match:
+            result["thought"] = thought_match.group(1).strip()
+        input_match   = re.search(r"Input:(.*?)(?:Thought:|Action:|$)", text, re.DOTALL)
+        if input_match:
+            result["input"] = input_match.group(1).strip()
+        return result
 
     if "Final Answer:" in text:
         result["final_answer"] = text.split("Final Answer:")[-1].strip()
@@ -170,13 +181,10 @@ def parse_agent_output(text: str) -> dict:
         return result
 
     thought_match = re.search(r"Thought:(.*?)(?:Action:|$)", text, re.DOTALL)
-    action_match  = re.search(r"Action:\s*(\w+)", text)
     input_match   = re.search(r"Input:(.*?)(?:Thought:|Action:|$)", text, re.DOTALL)
 
     if thought_match:
         result["thought"] = thought_match.group(1).strip()
-    if action_match:
-        result["action"] = action_match.group(1).strip()
     if input_match:
         result["input"] = input_match.group(1).strip()
 
@@ -389,28 +397,27 @@ WHAT TO BUILD:
         Append to OUTPUT_DIR/flagged_merchants.json — load → append → save.
         Return a confirmation string.
         """
-        parts = [p.strip() for p in input_str.split(",", 1)]
-        merchant_id = parts[0].strip('"\' ')
-        reason = parts[1].strip('"\' ') if len(parts) > 1 else ""
+        parts = input_str.split(",", 1)
+        merchant_id = parts[0].strip()
+        reason = parts[1].strip() if len(parts) > 1 else "Suspicious patterns"
         
         flagged_path = os.path.join(OUTPUT_DIR, "flagged_merchants.json")
-        entry = {
-            "merchant_id": merchant_id,
-            "reason": reason,
-            "flagged_at": datetime.now().isoformat() + "Z"
-        }
-        
-        flagged_list = []
+        flagged = []
         if os.path.exists(flagged_path):
             try:
                 with open(flagged_path, "r", encoding="utf-8") as f:
-                    flagged_list = json.load(f)
+                    flagged = json.load(f)
             except Exception:
                 pass
                 
-        flagged_list.append(entry)
+        flagged.append({
+            "merchant_id": merchant_id,
+            "reason": reason,
+            "flagged_at": datetime.now().isoformat()
+        })
+        
         with open(flagged_path, "w", encoding="utf-8") as f:
-            json.dump(flagged_list, f, indent=2, ensure_ascii=False)
+            json.dump(flagged, f, indent=2, ensure_ascii=False)
             
         return f"Merchant {merchant_id} flagged: {reason}"
 
@@ -427,7 +434,8 @@ WHAT TO BUILD:
     # Only uncomment this block after Steps 1–3 are done.
     # ─────────────────────────────────────────────────────────────────────────
     flag_question = (
-        "Find ALL merchants where transaction_count >= 2 AND avg_amount < 1000. "
+        "Find ALL merchants where transaction_count >= 2 AND avg_amount < 1500 "
+        "using ONLY the silver_transactions table. Do NOT use or join any other tables. "
         "For each one, call flag_merchant with their merchant_id and a one-line reason."
     )
     flag_result = run_react_agent(flag_question)
