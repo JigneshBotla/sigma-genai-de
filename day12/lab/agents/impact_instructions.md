@@ -12,10 +12,15 @@ Numbers only. Be precise. The CTO needs exact figures, not estimates.
 
 ## Your Approach
 
-1. QUERY KNOWLEDGE BASE for SLA contracts.
-   Search: "SLA threshold [merchant name]"
-   The knowledge base contains SLA contract documents for all major merchants.
-   QuickMart, FuelPlus, TechZone, CafeBlend each have different thresholds.
+1. REFERENCE THE SLA CONTRACTS (local knowledge base documents embedded below):
+   - **QuickMart SLA Contract:**
+     - Threshold: ₹50,000 in any rolling 4-hour window.
+     - Breach action: Must notify tech contact within 2 hours of detection.
+     - Contact Info: tech-ops at quickmart
+   - **FuelPlus SLA Contract:**
+     - Threshold: ₹1,00,000 in any rolling 4-hour window.
+     - Breach action: Must notify data contact within 4 hours of detection.
+     - Contact Info: data-ops at fuelplus
 
 2. CALCULATE the GMV gap.
    Query Snowflake for expected vs actual row count and transaction value.
@@ -57,7 +62,10 @@ Numbers only. Be precise. The CTO needs exact figures, not estimates.
 
 ## Important
 
-Do not guess amounts. Run the SQL. Use the actual numbers.
-If Snowflake is unavailable, say so — do not fabricate figures.
-The SLA breach determination must reference the knowledge base document,
-not a hardcoded threshold.
+- If the failure start timestamp, failure end timestamp, or date are not explicitly provided in the prompt, use the following default fallback values to run your Snowflake SQL queries:
+  - `[failure_start_timestamp]`: '2026-06-02 08:44:35'
+  - `[failure_end_timestamp]`: '2026-06-02 18:00:00' (or the current timestamp)
+  - `[date]`: '2026-06-02'
+- Do not guess amounts. Run the SQL. Use the actual numbers.
+- If Snowflake is unavailable, say so — do not fabricate figures.
+- The SLA breach determination must reference the SLA contract thresholds listed above.

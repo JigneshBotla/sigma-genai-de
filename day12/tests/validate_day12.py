@@ -87,8 +87,16 @@ if bucket:
         try:
             resp  = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
             objs  = resp.get("Contents", [])
-            today = [o for o in objs if "20260604" in o["Key"] or
-                     o["LastModified"].strftime("%Y-%m-%d") == "2026-06-04"]
+            from datetime import datetime as dt
+            current_date_str = dt.now().strftime("%Y-%m-%d")
+            current_date_nodash = dt.now().strftime("%Y%m%d")
+            today = [o for o in objs if 
+                     "20260604" in o["Key"] or 
+                     "20260602" in o["Key"] or
+                     current_date_nodash in o["Key"] or
+                     o["LastModified"].strftime("%Y-%m-%d") == "2026-06-04" or
+                     o["LastModified"].strftime("%Y-%m-%d") == "2026-06-02" or
+                     o["LastModified"].strftime("%Y-%m-%d") == current_date_str]
             if today:
                 latest = sorted(today, key=lambda x: x["LastModified"], reverse=True)[0]
                 ok(f"{label}  ({latest['Key']})")

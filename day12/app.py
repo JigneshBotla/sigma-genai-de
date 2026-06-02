@@ -18,7 +18,8 @@ import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent.parent.parent / "lab" / ".env")
+# Since we are running in the day12/ directory, lab/ is directly inside it
+load_dotenv(Path(__file__).parent / "lab" / ".env")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BUCKET = os.getenv("SIGMA_S3_BUCKET", "")
@@ -57,6 +58,7 @@ def load_data() -> dict:
         resp    = s3.list_objects_v2(Bucket=BUCKET, Prefix="reports/")
         objects = resp.get("Contents", [])
         if objects:
+            # We filter for .md files to ignore .json files or directory prefixes
             md_objects = [obj for obj in objects if obj["Key"].endswith(".md")]
             if md_objects:
                 latest     = sorted(md_objects, key=lambda x: x["LastModified"], reverse=True)[0]
@@ -181,6 +183,7 @@ See recovery agent findings."""
         resp    = s3.list_objects_v2(Bucket=BUCKET, Prefix="quarantine/")
         objects = resp.get("Contents", [])
         if objects:
+            # Filter for .csv files and ensure we ignore empty files or directory placeholders
             csv_objects = [obj for obj in objects if obj["Key"].endswith(".csv") and obj["Size"] > 0]
             if csv_objects:
                 latest  = sorted(csv_objects, key=lambda x: x["LastModified"], reverse=True)[0]

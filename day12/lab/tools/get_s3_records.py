@@ -1,8 +1,10 @@
 """
-Lambda Tool: get_s3_records  (registered as get_kinesis_records for API compatibility)
+Lambda Tool: get_s3_records
 Called by: Recovery Agent
+Action group: DataPlatformTools
 
-Reads malformed JSON files from S3 Bronze that were not loaded to Snowflake.
+Reads malformed JSON files from S3 Bronze that were written by the broken
+Lambda v2 but never loaded to Snowflake.
 Applies field remapping (merchant_nm → merchant_name, DD-MM-YYYY → YYYY-MM-DD).
 Returns clean records ready for load_to_snowflake.
 
@@ -17,9 +19,9 @@ from datetime import datetime, timezone
 def lambda_handler(event, context):
     params = {p["name"]: p["value"] for p in event.get("parameters", [])}
 
-    bucket              = params.get("bucket", os.getenv("SIGMA_S3_BUCKET", ""))
-    prefix              = params.get("start_timestamp", "bronze/")    # S3 prefix to read
-    
+    bucket             = params.get("bucket", os.getenv("SIGMA_S3_BUCKET", ""))
+    prefix             = params.get("s3_prefix", "bronze/disaster/")
+
     raw_loaded = params.get("already_loaded_ids", "")
     already_loaded_ids = []
     if raw_loaded:
@@ -28,12 +30,15 @@ def lambda_handler(event, context):
             try:
                 already_loaded_ids = json.loads(raw_loaded_str)
             except Exception:
-                already_loaded_ids = [x.strip() for x in raw_loaded_str.strip("[]").replace('"', '').replace("'", "").split(",") if x.strip()]
+                already_loaded_ids = [
+                    x.strip()
+                    for x in raw_loaded_str.strip("[]").replace('"', '').replace("'", "").split(",")
+                    if x.strip()
+                ]
         else:
             already_loaded_ids = [x.strip() for x in raw_loaded_str.split(",") if x.strip()]
-            
-    region              = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 
+    region = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
     result = read_s3_records(bucket, prefix, already_loaded_ids, region)
 
     return {
@@ -72,30 +77,26 @@ def read_s3_records(bucket: str, prefix: str, already_loaded_ids: list,
 
     s3 = boto3.client("s3", region_name=region)
 
-    # Normalise prefix — strip "bronze/" if caller passed a timestamp
-    if not prefix.startswith("bronze/"):
-        prefix = f"bronze/disaster/"   # default disaster prefix
+    if not prefix or not prefix.startswith("bronze/"):
+        prefix = "bronze/disaster/"
 
-    # List all JSON files under the prefix
     resp  = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
-    files = [o["Key"] for o in resp.get("Contents", [])
-             if o["Key"].endswith(".json") and o["Size"] > 0]
+    files = [
+        o["Key"] for o in resp.get("Contents", [])
+        if o["Key"].endswith(".json") and o["Size"] > 0
+    ]
 
-    loaded_set    = set(already_loaded_ids)
-    raw_records   = []
-    fixed_records = []
-    skipped_ids   = []
+    loaded_set         = set(already_loaded_ids)
+    raw_records        = []
+    fixed_records      = []
+    quarantine_records = []
+    skipped_ids        = []
 
     for key in files:
         try:
             body    = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
             content = json.loads(body)
-
-            # Support both single record and array of records per file
-            if isinstance(content, list):
-                batch = content
-            else:
-                batch = [content]
+            batch   = content if isinstance(content, list) else [content]
 
             for rec in batch:
                 raw_records.append(rec)
@@ -104,30 +105,64 @@ def read_s3_records(bucket: str, prefix: str, already_loaded_ids: list,
 
                 if tid and tid in loaded_set:
                     skipped_ids.append(tid)
+                elif not tid or float(fixed.get("amount", 0) or 0) <= 0:
+                    quarantine_records.append(fixed)
                 else:
                     fixed_records.append(fixed)
                     if tid:
                         loaded_set.add(tid)
         except Exception:
-            pass   # skip unreadable files
+            pass
+
+    # Write clean records to S3 staging — agents pass S3 references, not data.
+    # load_to_snowflake reads from this key directly (avoids 170KB blob in context).
+    ts_str      = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    staging_key = f"bronze/staging/recovery_{ts_str}.json"
+    q_key       = None
+
+    try:
+        s3.put_object(
+            Bucket=bucket, Key=staging_key,
+            Body=json.dumps(fixed_records, default=str).encode(),
+            ContentType="application/json",
+        )
+    except Exception as e:
+        staging_key = f"ERROR writing staging: {e}"
+
+    if quarantine_records:
+        q_key = f"bronze/quarantine/recovery_{ts_str}.json"
+        try:
+            s3.put_object(
+                Bucket=bucket, Key=q_key,
+                Body=json.dumps(quarantine_records, default=str).encode(),
+                ContentType="application/json",
+            )
+        except Exception:
+            q_key = None
 
     return {
-        "bucket":             bucket,
-        "prefix":             prefix,
-        "files_read":         len(files),
-        "raw_records_found":  len(raw_records),
-        "duplicates_skipped": len(skipped_ids),
-        "clean_records":      len(fixed_records),
-        "records":            fixed_records,
+        "bucket":              bucket,
+        "s3_prefix":           prefix,
+        "files_read":          len(files),
+        "raw_records_found":   len(raw_records),
+        "duplicates_skipped":  len(skipped_ids),
+        "clean_records":       len(fixed_records),
+        "quarantined_records": len(quarantine_records),
+        "s3_staging_key":      staging_key,
+        "quarantine_key":      q_key,
         "field_fixes_applied": {
             "merchant_nm_renamed": sum(1 for r in raw_records if "merchant_nm" in r),
             "date_format_fixed":   sum(
                 1 for r in raw_records
-                if re.match(r"^\d{2}-\d{2}-\d{4}$",
-                            str(r.get("transaction_date", "")))
+                if re.match(r"^\d{2}-\d{2}-\d{4}$", str(r.get("transaction_date", "")))
             ),
         },
+        "next_step": (
+            f"Call load_to_snowflake with s3_staging_key='{staging_key}' "
+            f"and bucket='{bucket}' to load {len(fixed_records)} clean records."
+        ),
     }
+
 
 
 # ── Local test ─────────────────────────────────────────────────────────────────
@@ -153,4 +188,4 @@ if __name__ == "__main__":
 
     if "--test" in sys.argv:
         assert "records" in result
-        print("\nget_kinesis_records.py test PASSED")
+        print("\nget_s3_records.py test PASSED")

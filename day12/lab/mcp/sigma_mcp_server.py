@@ -21,29 +21,27 @@ TOOLS = [
     {
         "name":        "check_cloudwatch_metrics",
         "lambda":      "sigma-tool-check-cloudwatch",
-        "description": "Correlates Lambda version history, Firehose delivery failures, "
-                       "and Kinesis throttles over a time window. "
+        "description": "Correlates Lambda version history, S3 delivery status, "
+                       "and CloudWatch errors over a time window. "
                        "Use this first when investigating a pipeline failure.",
         "parameters": {
             "function_name": {"type": "string",  "required": False,
-                              "default": "sigma-kinesis-producer",
+                              "default": "sigma-data-producer",
                               "description": "Lambda function to investigate"},
             "hours_back":    {"type": "integer", "required": False, "default": 8,
                               "description": "How many hours back to look"},
         },
     },
     {
-        "name":        "get_kinesis_records",
-        "lambda":      "sigma-tool-get-kinesis-records",
-        "description": "Replays records from a Kinesis shard starting at a specific timestamp. "
-                       "Applies field remapping to fix broken producer output. "
+        "name":        "get_s3_records",
+        "lambda":      "sigma-tool-get-s3-records",
+        "description": "Reads malformed JSON records from S3 Bronze disaster folder. "
+                       "Applies field remapping (merchant_nm→merchant_name, DD-MM-YYYY→YYYY-MM-DD). "
                        "Use when you need to recover records that did not reach Snowflake.",
         "parameters": {
-            "stream_name":        {"type": "string",  "required": False},
-            "shard_id":           {"type": "string",  "required": False,
-                                   "default": "shardId-000000000000"},
-            "start_timestamp":    {"type": "string",  "required": False,
-                                   "description": "ISO timestamp for replay start"},
+            "s3_prefix":          {"type": "string",  "required": False,
+                                   "default": "bronze/disaster/",
+                                   "description": "S3 prefix to read malformed files from"},
             "already_loaded_ids": {"type": "string",  "required": False,
                                    "default": "[]",
                                    "description": "JSON array of transaction_ids already in Snowflake"},
@@ -68,7 +66,7 @@ TOOLS = [
                        "Use after root cause is confirmed as a bad Lambda deploy.",
         "parameters": {
             "function_name":  {"type": "string", "required": False,
-                               "default": "sigma-kinesis-producer"},
+                               "default": "sigma-data-producer"},
             "alias_name":     {"type": "string", "required": False, "default": "LIVE"},
             "target_version": {"type": "string", "required": False, "default": "previous"},
         },

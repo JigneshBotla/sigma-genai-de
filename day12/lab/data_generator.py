@@ -22,7 +22,7 @@ Usage:
 ==============================================================================
 """
 
-import argparse, boto3, json, random, time, sys
+import argparse, boto3, json, random, time, sys, os
 from datetime import datetime, timedelta
 
 random.seed()  # different seed each run so outputs differ per team
@@ -135,18 +135,24 @@ def main():
     print(f"  Region : {args.region}")
     print("=" * 60)
 
+    s3_direct_mode = False
+    s3_client = None
+    bucket_name = os.getenv("SIGMA_S3_BUCKET", "sigma-datatech-nexusteam")
+
     try:
         client = boto3.client("kinesis", region_name=args.region)
         # Quick check — will raise if credentials or stream don't exist
         client.describe_stream_summary(StreamName=args.stream)
     except Exception as e:
-        print(f"[ERROR] Cannot connect to Kinesis stream '{args.stream}': {e}")
-        print("        Check: aws kinesis list-streams --region", args.region)
-        sys.exit(1)
+        print(f"[WARNING] Kinesis stream '{args.stream}' is unavailable/not subscribed: {e}")
+        print("          Switching to Direct S3 Ingestion Mode (No-Kinesis Fallback)!")
+        s3_direct_mode = True
+        s3_client = boto3.client("s3", region_name=args.region)
 
     sent = 0
     errors = 0
     start = time.time()
+    records_list = []
 
     for i in range(args.records):
         record = make_clean_record(i)
@@ -162,13 +168,136 @@ def main():
 
         # Only print every 10th record to keep output readable
         verbose = (i % 10 == 0)
-        ok = send_to_kinesis(client, args.stream, record, verbose=verbose)
-        if ok:
+        
+        if s3_direct_mode:
+            records_list.append(record)
+            if verbose:
+                tid  = record.get("transaction_id") or record.get("transaction_id", "NULL")
+                name = record.get("merchant_name") or record.get("merchant_nm", "?")
+                amt  = record.get("amount", 0)
+                curr = record.get("currency", "?")
+                print(f"  [S3-DIR] {str(tid):12} | {name:12} | {curr} {float(amt):>10,.2f}")
             sent += 1
         else:
-            errors += 1
+            ok = send_to_kinesis(client, args.stream, record, verbose=verbose)
+            if ok:
+                sent += 1
+            else:
+                errors += 1
 
         time.sleep(args.delay)
+
+    if s3_direct_mode and records_list:
+        # Write records to S3 as standard JSON arrays in batches of 50
+        batch_size = 50
+        files_written = 0
+        from datetime import datetime
+        # Use fixed 02 hour path for chaos mode to match disaster scenario, or dynamic path for clean mode
+        if args.mode == "chaos":
+            prefix = "bronze/disaster/2026/06/04/02/"
+        else:
+            prefix = f"bronze/clean/{datetime.utcnow().strftime('%Y/%m/%d/%H')}/"
+            
+        print(f"\n  [S3-DIR] Writing records to S3 bucket '{bucket_name}' under prefix '{prefix}'...")
+        for j in range(0, len(records_list), batch_size):
+            batch = records_list[j:j + batch_size]
+            key = f"{prefix}batch_direct_{int(time.time())}_{j//batch_size:03d}.json"
+            try:
+                s3_client.put_object(
+                    Bucket=bucket_name,
+                    Key=key,
+                    Body=json.dumps(batch).encode("utf-8"),
+                    ContentType="application/json"
+                )
+                files_written += 1
+            except Exception as s3_err:
+                print(f"  [ERROR] S3 write failed: {s3_err}")
+                errors += len(batch)
+                sent -= len(batch)
+        print(f"  [S3-DIR] Successfully uploaded {sent} records to {files_written} files in S3.")
+
+        # If clean mode, also load records directly into Snowflake for immediate verification
+        if args.mode == "clean":
+            print(f"\n  [S3-DIR] Ingesting {len(records_list)} clean records into Snowflake database...")
+            try:
+                import snowflake.connector
+                from dotenv import load_dotenv
+                load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+                
+                conn = snowflake.connector.connect(
+                    account=os.getenv("SNOWFLAKE_ACCOUNT"),
+                    user=os.getenv("SNOWFLAKE_USER"),
+                    password=os.getenv("SNOWFLAKE_PASSWORD"),
+                    database=os.getenv("SNOWFLAKE_DATABASE", "SIGMA"),
+                    schema=os.getenv("SNOWFLAKE_SCHEMA", "SILVER"),
+                    warehouse=os.getenv("SNOWFLAKE_WAREHOUSE", "SIGMA_WH"),
+                )
+                cur = conn.cursor()
+                
+                # Ensure target table exists or is ready, then load
+                ts = datetime.utcnow().isoformat()
+                cur.execute("""
+                    CREATE TEMPORARY TABLE IF NOT EXISTS temp_transactions (
+                        transaction_id   VARCHAR,
+                        merchant_name    VARCHAR,
+                        category         VARCHAR,
+                        amount           FLOAT,
+                        currency         VARCHAR,
+                        transaction_date DATE,
+                        status           VARCHAR,
+                        customer_id      VARCHAR,
+                        payment_method   VARCHAR,
+                        merchant_city    VARCHAR,
+                        _loaded_at       TIMESTAMP_TZ
+                    )
+                """)
+                
+                batch_values = []
+                for rec in records_list:
+                    batch_values.append((
+                        rec.get("transaction_id", ""),
+                        rec.get("merchant_name", rec.get("merchant_nm", "")),
+                        rec.get("category", ""),
+                        float(rec.get("amount", 0) or 0),
+                        rec.get("currency", "INR"),
+                        rec.get("transaction_date", ""),
+                        rec.get("status", ""),
+                        rec.get("customer_id", ""),
+                        rec.get("payment_method", ""),
+                        rec.get("merchant_city", ""),
+                        ts,
+                    ))
+                
+                cur.executemany(
+                    """INSERT INTO temp_transactions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    batch_values,
+                )
+                
+                table_name = f"{os.getenv('SNOWFLAKE_DATABASE','SIGMA')}.{os.getenv('SNOWFLAKE_SCHEMA','SILVER')}.TRANSACTIONS"
+                cur.execute(f"""
+                    MERGE INTO {table_name} AS target
+                    USING temp_transactions AS src
+                    ON target.transaction_id = src.transaction_id
+                    WHEN NOT MATCHED THEN INSERT (
+                        transaction_id, merchant_name, category, amount, currency,
+                        transaction_date, status, customer_id, payment_method,
+                        merchant_city, _loaded_at
+                    ) VALUES (
+                        src.transaction_id, src.merchant_name, src.category, src.amount,
+                        src.currency, src.transaction_date, src.status, src.customer_id,
+                        src.payment_method, src.merchant_city, src._loaded_at
+                    )
+                """)
+                
+                cur.execute("SELECT COUNT(*) FROM temp_transactions")
+                total = cur.fetchone()[0]
+                cur.execute(f"SELECT COUNT(*) FROM {table_name} WHERE _loaded_at = '{ts}'")
+                rows_loaded = cur.fetchone()[0]
+                print(f"  [S3-DIR] Snowflake load successful! Attempted: {total}, Loaded: {rows_loaded}")
+                conn.commit()
+                conn.close()
+            except Exception as se:
+                print(f"  [WARNING] Snowflake load failed: {se}")
 
     elapsed = round(time.time() - start, 1)
     print("=" * 60)

@@ -43,7 +43,7 @@ echo "========================================================"
 # Tool definitions: "function-name:source-file"
 TOOLS=(
     "sigma-tool-check-cloudwatch:tools/check_cloudwatch.py"
-    "sigma-tool-get-kinesis-records:tools/get_kinesis_records.py"
+    "sigma-tool-get-s3-records:tools/get_s3_records.py"
     "sigma-tool-query-snowflake:tools/query_snowflake.py"
     "sigma-tool-rollback-lambda:tools/rollback_lambda_version.py"
     "sigma-tool-create-alarm:tools/create_cloudwatch_alarm.py"
@@ -90,8 +90,11 @@ for ENTRY in "${TOOLS[@]}"; do
         echo "  Bundling snowflake-connector-python (takes ~30s)..."
         PKG_DIR="/tmp/pkg_${FUNC_NAME}"
         rm -rf "$PKG_DIR" && mkdir -p "$PKG_DIR"
-        pip install snowflake-connector-python -t "$PKG_DIR/" -q \
-            --only-binary :all:
+        python3 -m pip install snowflake-connector-python -t "$PKG_DIR/" -q \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 3.12 \
+            --only-binary=:all:
         cp "$FULL_PATH" "$PKG_DIR/${HANDLER_NAME}.py"
         rm -f "$ZIP_FILE"
         cd "$PKG_DIR" && zip -qr "$ZIP_FILE" . && cd - > /dev/null
@@ -114,14 +117,18 @@ for ENTRY in "${TOOLS[@]}"; do
             --region "$REGION" \
             --output text --query 'FunctionName' > /dev/null
 
+        # Wait for the function update to complete (AWS best practice)
+        aws lambda wait function-updated \
+            --function-name "$FUNC_NAME" \
+            --region "$REGION"
+
         # Update environment variables
         aws lambda update-function-configuration \
             --function-name "$FUNC_NAME" \
             --environment "Variables={
-                AWS_DEFAULT_REGION=$REGION,
                 SIGMA_S3_BUCKET=${SIGMA_S3_BUCKET:-},
                 SIGMA_STREAM=${SIGMA_STREAM:-sigma-transactions},
-                PRODUCER_LAMBDA_NAME=${PRODUCER_LAMBDA_NAME:-sigma-kinesis-producer},
+                PRODUCER_LAMBDA_NAME=${PRODUCER_LAMBDA_NAME:-sigma-data-producer},
                 PRODUCER_LAMBDA_ALIAS=${PRODUCER_LAMBDA_ALIAS:-LIVE},
                 SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT:-},
                 SNOWFLAKE_USER=${SNOWFLAKE_USER:-},
@@ -147,10 +154,9 @@ for ENTRY in "${TOOLS[@]}"; do
             --timeout 120 \
             --memory-size 256 \
             --environment "Variables={
-                AWS_DEFAULT_REGION=$REGION,
                 SIGMA_S3_BUCKET=${SIGMA_S3_BUCKET:-},
                 SIGMA_STREAM=${SIGMA_STREAM:-sigma-transactions},
-                PRODUCER_LAMBDA_NAME=${PRODUCER_LAMBDA_NAME:-sigma-kinesis-producer},
+                PRODUCER_LAMBDA_NAME=${PRODUCER_LAMBDA_NAME:-sigma-data-producer},
                 PRODUCER_LAMBDA_ALIAS=${PRODUCER_LAMBDA_ALIAS:-LIVE},
                 SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT:-},
                 SNOWFLAKE_USER=${SNOWFLAKE_USER:-},
@@ -183,7 +189,7 @@ echo "========================================================"
 echo ""
 echo "Testing MCP tool discovery..."
 cd "$LAB_DIR"
-python mcp/test_mcp.py
+python3 mcp/test_mcp.py
 
 echo ""
 echo "Next steps:"

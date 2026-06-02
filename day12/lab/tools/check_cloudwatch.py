@@ -16,7 +16,7 @@ def lambda_handler(event, context):
     params = {p["name"]: p["value"] for p in event.get("parameters", [])}
     hours_back   = int(params.get("hours_back", 8))
     function_name = params.get("function_name",
-                               os.getenv("PRODUCER_LAMBDA_NAME", "sigma-kinesis-producer"))
+                               os.getenv("PRODUCER_LAMBDA_NAME", "sigma-data-producer"))
     region = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 
     result = investigate(function_name, hours_back, region)
@@ -153,6 +153,24 @@ def investigate(function_name: str, hours_back: int, region: str) -> dict:
             f"or date format, causing Snowflake COPY INTO to reject all records silently."
         )
 
+    # ── Option A: Detect S3 zero-byte files ──────────────────────────────────
+    findings["zero_byte_files"] = []
+    try:
+        bucket = os.getenv("SIGMA_S3_BUCKET", "")
+        if bucket:
+            s3 = boto3.client("s3", region_name=region)
+            resp = s3.list_objects_v2(Bucket=bucket, Prefix="bronze/")
+            for obj in resp.get("Contents", []):
+                if obj["Size"] == 0 and not obj["Key"].endswith("/"):
+                    findings["zero_byte_files"].append({
+                        "key": obj["Key"],
+                        "size": obj["Size"],
+                        "last_modified": obj["LastModified"].isoformat(),
+                        "alert": "zero-byte file detected"
+                    })
+    except Exception as e:
+        findings["zero_byte_files"] = [{"error": str(e)}]
+
     return findings
 
 
@@ -163,7 +181,7 @@ if __name__ == "__main__":
     load_dotenv()
 
     hours = int(sys.argv[1]) if len(sys.argv) > 1 else 8
-    fn    = os.getenv("PRODUCER_LAMBDA_NAME", "sigma-kinesis-producer")
+    fn    = os.getenv("PRODUCER_LAMBDA_NAME", "sigma-data-producer")
     region = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 
     print(f"\nInvestigating {fn} over last {hours} hours...\n")

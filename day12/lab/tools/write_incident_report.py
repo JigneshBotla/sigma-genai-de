@@ -161,9 +161,17 @@ def _build_timeline(findings: dict) -> str:
     events = findings.get("timeline", [])
     if not events:
         return "| ? | Failure window — see forensics findings |"
-    return "\n".join(
-        f"| {e.get('ts','?')} | {e.get('event','?')} |" for e in events
-    )
+    lines = []
+    for e in events:
+        if isinstance(e, str):
+            try:
+                e = json.loads(e)
+            except Exception:
+                e = {"ts": "?", "event": e}
+        if not isinstance(e, dict):
+            e = {"ts": "?", "event": str(e)}
+        lines.append(f"| {e.get('ts','?')} | {e.get('event','?')} |")
+    return "\n".join(lines)
 
 
 def _build_fix_section(recovery: dict, rollback: dict) -> str:
@@ -187,21 +195,37 @@ def _build_alarms_section(hardening: dict) -> str:
     alarms = hardening.get("alarms_created", [])
     if not alarms:
         return "- See hardening agent findings."
-    return "\n".join(
-        f"- **{a.get('alarm_name','?')}** — {a.get('description','?')}"
-        for a in alarms
-    )
+    lines = []
+    for a in alarms:
+        if isinstance(a, str):
+            try:
+                a = json.loads(a)
+            except Exception:
+                a = {"alarm_name": a, "description": "?"}
+        if not isinstance(a, dict):
+            a = {"alarm_name": str(a), "description": "?"}
+        lines.append(f"- **{a.get('alarm_name','?')}** — {a.get('description','?')}")
+    return "\n".join(lines)
 
 
 def _build_agent_perf(findings: dict) -> str:
     perf = findings.get("agent_performance", [])
     if not perf:
         return "| — | — | — | — |"
-    return "\n".join(
-        f"| {p.get('agent','?')} | {p.get('duration_sec','?')} | "
-        f"{p.get('tool_calls','?')} | {p.get('key_finding','?')} |"
-        for p in perf
-    )
+    lines = []
+    for p in perf:
+        if isinstance(p, str):
+            try:
+                p = json.loads(p)
+            except Exception:
+                p = {"agent": p, "duration_sec": "?", "tool_calls": "?", "key_finding": "?"}
+        if not isinstance(p, dict):
+            p = {"agent": str(p), "duration_sec": "?", "tool_calls": "?", "key_finding": "?"}
+        lines.append(
+            f"| {p.get('agent','?')} | {p.get('duration_sec','?')} | "
+            f"{p.get('tool_calls','?')} | {p.get('key_finding','?')} |"
+        )
+    return "\n".join(lines)
 
 
 # ── Local test ────────────────────────────────────────────────────────────────

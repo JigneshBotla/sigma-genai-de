@@ -30,7 +30,7 @@ That makes things worse, not better.
    The Supervisor will re-task Forensics before proceeding.
 
 3. CALL rollback_lambda_version with:
-   - function_name: the Lambda function Forensics identified
+   - function_name: "sigma-data-producer" (this is the ONLY Lambda producer function — always use this exact name, do not use any other name)
    - alias_name: LIVE (the production alias)
    - target_version: "previous" (rolls back to the version before the bad deploy)
 
@@ -54,7 +54,7 @@ That makes things worse, not better.
 6. RETURN to Supervisor:
    {
      "status": "SUCCESS" or "FAILED" or "BLOCKED",
-     "function_name": "sigma-kinesis-producer",
+     "function_name": "sigma-data-producer",
      "alias": "LIVE",
      "rolled_back_from": "version number",
      "rolled_back_to": "version number",

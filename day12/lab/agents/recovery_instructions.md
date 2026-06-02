@@ -1,6 +1,6 @@
 # Bedrock Agent Instructions — Recovery Agent
 # Sub-agent of the Supervisor Agent.
-# Tools: get_kinesis_records, query_snowflake, quarantine_rows, load_to_snowflake
+# Tools: get_s3_records, query_snowflake, quarantine_rows, load_to_snowflake
 # Knowledge base: sigma-platform-kb (runbooks collection)
 
 ---
@@ -17,32 +17,33 @@ If the Supervisor has not confirmed rollback: ask before proceeding.
 
 ## Your Approach
 
-1. QUERY KNOWLEDGE BASE for the kinesis replay runbook.
-   Search: "Kinesis replay idempotent recovery"
+1. QUERY KNOWLEDGE BASE for the S3 recovery runbook.
+   Search: "S3 idempotent recovery"
    Follow the runbook procedure.
 
 2. GET the list of transaction_ids already in Snowflake for the failure window.
    SQL: SELECT transaction_id FROM SIGMA.SILVER.TRANSACTIONS
         WHERE _loaded_at >= '[rollback_timestamp]'
-   Pass this list to get_kinesis_records as already_loaded_ids.
+   Pass this list to get_s3_records as already_loaded_ids.
    This ensures zero duplicates even if this recovery runs twice.
 
-3. CALL get_kinesis_records with:
-   - start_timestamp: the failure start time from Forensics findings
+3. CALL get_s3_records with:
+   - s3_prefix: "bronze/disaster/" (where the broken Lambda v2 wrote files)
    - already_loaded_ids: the list from step 2
-   The tool applies field remapping automatically (merchant_nm→merchant_name,
-   date format fix). You do not need to do this manually.
+   The tool reads all JSON files from S3, applies field remapping automatically
+   (merchant_nm→merchant_name, date format DD-MM-YYYY→YYYY-MM-DD),
+   then writes clean records to S3 staging and returns:
+   - s3_staging_key: the S3 path of the clean records file
+   - clean_records: count of clean records ready to load
+   - quarantined_records: count of bad records (null IDs, zero amounts)
+   - quarantine_key: S3 path of quarantined records
+   You do NOT need to handle the records blob — the tool does it for you.
 
-4. SPLIT records into clean and quarantine-worthy:
-   - Clean: transaction_id is not null/empty, amount > 0, transaction_date is valid
-   - Quarantine: any record that fails these checks
-
-5. CALL quarantine_rows for the bad records.
-   Use a specific quarantine_reason (e.g., "null_transaction_id" or "negative_amount").
-   Quarantine is not deletion — these records go to S3 quarantine/ for human review.
-
-6. CALL load_to_snowflake for the clean records.
-   The tool uses MERGE INTO — loading the same transaction_id twice is safe.
+4. CALL load_to_snowflake with:
+   - s3_staging_key: the value from get_s3_records output
+   - bucket: the same S3 bucket
+   Do NOT pass records inline. The s3_staging_key is the correct input.
+   The tool reads the clean records from S3 and loads them via MERGE INTO.
 
 7. VERIFY: call query_snowflake to confirm the row count increased.
    SELECT COUNT(*) FROM SIGMA.SILVER.TRANSACTIONS
@@ -63,7 +64,7 @@ If the Supervisor has not confirmed rollback: ask before proceeding.
 ## What idempotency means here
 
 If this recovery runs twice (e.g., a retry), the same records must not
-appear twice in Snowflake. The get_kinesis_records tool and the
+appear twice in Snowflake. The get_s3_records tool and the
 load_to_snowflake MERGE guarantee this.
 
 The already_loaded_ids parameter is the belt to the MERGE's suspenders.

@@ -34,7 +34,7 @@ ALARM_TEMPLATES = {
         "AlarmDescription":   "Fires when Lambda alias LIVE points to a version not in the approved list. Catch bad deploys immediately.",
         "Namespace":          "AWS/Lambda",
         "MetricName":         "Errors",
-        "Dimensions":         [{"Name": "FunctionName", "Value": "sigma-kinesis-producer"}],
+        "Dimensions":         [{"Name": "FunctionName", "Value": "sigma-data-producer"}],
         "Period":             60,
         "EvaluationPeriods":  1,
         "Threshold":          5,

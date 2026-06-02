@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 region      = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
-fn_name     = os.getenv("PRODUCER_LAMBDA_NAME", "sigma-kinesis-producer")
+fn_name     = os.getenv("PRODUCER_LAMBDA_NAME", "sigma-data-producer")
 hours_back  = int(sys.argv[1]) if len(sys.argv) > 1 else 8
 
 cw  = boto3.client("cloudwatch", region_name=region)
@@ -98,6 +98,6 @@ if not freshness:
 
 print()
 print("  KEY QUESTION: Is there a timestamp where Lambda version changed")
-print("  AND Firehose freshness spiked AND Lambda errors appeared?")
+print("  AND Lambda errors appeared AND S3 has files with wrong field names?")
 print("  That 5-minute window is the root cause.")
 print()
