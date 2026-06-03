@@ -22,9 +22,6 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / "lab" / ".env")
 
 # ── Config ────────────────────────────────────────────────────────────────────
-BUCKET = os.getenv("SIGMA_S3_BUCKET", "")
-REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
-
 SEVERITY_COLOR = {
     "critical": "🔴",
     "warning":  "🟡",
@@ -39,23 +36,64 @@ st.set_page_config(
     layout="wide",
 )
 
-# ── Guard: bucket must be set ─────────────────────────────────────────────────
-if not BUCKET:
-    st.error("SIGMA_S3_BUCKET is not set. Check lab/.env")
+# ── Sidebar Credentials ───────────────────────────────────────────────────────
+st.sidebar.title("🔐 AWS Authentication")
+st.sidebar.markdown(
+    "Configure credentials below to pull incident data dynamically from AWS."
+)
+
+aws_key = st.sidebar.text_input(
+    "AWS Access Key ID", 
+    value=os.getenv("AWS_ACCESS_KEY_ID", ""), 
+    type="password"
+)
+aws_secret = st.sidebar.text_input(
+    "AWS Secret Access Key", 
+    value=os.getenv("AWS_SECRET_ACCESS_KEY", ""), 
+    type="password"
+)
+bucket_name = st.sidebar.text_input(
+    "S3 Bucket Name", 
+    value=os.getenv("SIGMA_S3_BUCKET", "")
+)
+region_name = st.sidebar.text_input(
+    "AWS Region", 
+    value=os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+)
+
+# ── Guard: credentials must be configured ─────────────────────────────────────
+if not aws_key or not aws_secret or not bucket_name:
+    st.info("👋 Welcome to the **Sigma Command Center**!")
+    st.markdown(
+        "Please configure your **AWS Access Key ID**, **AWS Secret Access Key**, "
+        "and **S3 Bucket Name** in the sidebar on the left to authenticate and load "
+        "your real-time incident dashboard."
+    )
     st.stop()
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=30)
-def load_data() -> dict:
-    s3  = boto3.client("s3", region_name=REGION)
-    cw  = boto3.client("cloudwatch", region_name=REGION)
+def load_data(aws_key, aws_secret, bucket_name, region_name) -> dict:
+    # Instantiate clients dynamically using credentials entered in UI or loaded via env
+    s3 = boto3.client(
+        "s3", 
+        region_name=region_name,
+        aws_access_key_id=aws_key if aws_key else None,
+        aws_secret_access_key=aws_secret if aws_secret else None
+    )
+    cw = boto3.client(
+        "cloudwatch", 
+        region_name=region_name,
+        aws_access_key_id=aws_key if aws_key else None,
+        aws_secret_access_key=aws_secret if aws_secret else None
+    )
 
     # ── Incident report ───────────────────────────────────────────────────────
     report_md   = ""
     report_key  = ""
     try:
-        resp    = s3.list_objects_v2(Bucket=BUCKET, Prefix="reports/")
+        resp    = s3.list_objects_v2(Bucket=bucket_name, Prefix="reports/")
         objects = resp.get("Contents", [])
         if objects:
             # We filter for .md files to ignore .json files or directory prefixes
@@ -63,7 +101,7 @@ def load_data() -> dict:
             if md_objects:
                 latest     = sorted(md_objects, key=lambda x: x["LastModified"], reverse=True)[0]
                 report_key = latest["Key"]
-                report_md  = s3.get_object(Bucket=BUCKET, Key=report_key)["Body"].read().decode()
+                report_md  = s3.get_object(Bucket=bucket_name, Key=report_key)["Body"].read().decode()
                 
                 # ── Beautify Incident Report Markdown (Replace ? and placeholder text) ──
                 if "Pipeline failure detected." in report_md or "?" in report_md:
@@ -180,14 +218,14 @@ See recovery agent findings."""
     # ── Quarantine CSV ────────────────────────────────────────────────────────
     quarantine_df = pd.DataFrame()
     try:
-        resp    = s3.list_objects_v2(Bucket=BUCKET, Prefix="quarantine/")
+        resp    = s3.list_objects_v2(Bucket=bucket_name, Prefix="quarantine/")
         objects = resp.get("Contents", [])
         if objects:
             # Filter for .csv files and ensure we ignore empty files or directory placeholders
             csv_objects = [obj for obj in objects if obj["Key"].endswith(".csv") and obj["Size"] > 0]
             if csv_objects:
                 latest  = sorted(csv_objects, key=lambda x: x["LastModified"], reverse=True)[0]
-                csv_raw = s3.get_object(Bucket=BUCKET, Key=latest["Key"])["Body"].read().decode()
+                csv_raw = s3.get_object(Bucket=bucket_name, Key=latest["Key"])["Body"].read().decode()
                 quarantine_df = pd.read_csv(io.StringIO(csv_raw))
     except Exception as e:
         st.warning(f"Could not read quarantine file from S3: {e}")
@@ -272,13 +310,13 @@ See recovery agent findings."""
         "report_time":    report_time,
         "alarms":         alarms,
         "quarantine_df":  quarantine_df,
-        "bucket":         BUCKET,
+        "bucket":         bucket_name,
     }
 
 
 # ── Load ──────────────────────────────────────────────────────────────────────
 with st.spinner("Reading from your S3 bucket..."):
-    data = load_data()
+    data = load_data(aws_key, aws_secret, bucket_name, region_name)
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("🔴 Sigma Command Center")
@@ -361,15 +399,15 @@ if data["report_md"]:
 else:
     st.warning(
         "No incident report found in S3. "
-        f"Expected: s3://{BUCKET}/reports/incident_*.md\n\n"
+        f"Expected: s3://{bucket_name}/reports/incident_*.md\n\n"
         "Did Phase 3 complete successfully? Re-run:\n"
-        "`python lab/trigger/pipeline_trigger.py --bucket " + BUCKET + "`"
+        "`python lab/trigger/pipeline_trigger.py --bucket " + bucket_name + "`"
     )
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown("---")
 st.caption(
     f"Sigma Intelligence Platform · "
-    f"Reading from s3://{BUCKET} · "
+    f"Reading from s3://{bucket_name} · "
     f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 )
