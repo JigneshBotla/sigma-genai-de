@@ -242,7 +242,7 @@ lab/tools/
 
 ---
 
-### Step 2 — Deploy All 9 Lambda Tool Functions
+### Step 2 — Deploy All 10 Lambda Tool Functions
 
 ```bash
 cd day12
